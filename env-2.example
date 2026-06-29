@@ -1,0 +1,17 @@
+# VenDrop Art Engine — Environment Variables
+# Copy this file, rename it to .env, and fill in your real keys
+# NEVER commit your real .env file to GitHub
+
+# ── Anthropic (Claude) ───────────────────────────────────────────────────────
+# Get at: console.anthropic.com → API Keys
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+# ── fal.ai (FLUX image generation) ──────────────────────────────────────────
+# Get at: fal.ai → Settings → API Keys (free account, free starter credits)
+# Cost: ~$0.04-0.06 per image at print resolution
+FAL_KEY=your-fal-key-here
+
+# ── Printify ─────────────────────────────────────────────────────────────────
+# Get at: printify.com → Settings → API
+PRINTIFY_API_TOKEN=your-printify-token-here
+PRINTIFY_SHOP_ID=your-shop-id-here
