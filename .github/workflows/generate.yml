@@ -1,0 +1,112 @@
+name: VenDrop — Auto Generate + Render + Upload
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # Every 6 hours
+  workflow_dispatch:          # Manual trigger in GitHub UI
+    inputs:
+      limit:
+        description: 'Max images to render per run (default: 10)'
+        required: false
+        default: '10'
+      skip_images:
+        description: 'Skip image generation? (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  generate-and-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── Step 1: Generate new design concepts via Claude ───────────────────
+      - name: Generate design concepts
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "=== Generating new design concepts ==="
+          python generate_designs.py
+          echo "designs.json updated:"
+          python -c "
+          import json
+          lib = json.load(open('output/designs.json'))
+          pending = [d for d in lib if d['status']=='pending']
+          print(f'  Total designs: {len(lib)}')
+          print(f'  Pending render: {len(pending)}')
+          "
+
+      # ── Step 2: Render images via FLUX1.1 Pro on fal.ai ──────────────────
+      - name: Render images with FLUX
+        if: ${{ github.event.inputs.skip_images != 'true' }}
+        env:
+          FAL_KEY:            ${{ secrets.FAL_KEY }}
+          PRINTIFY_API_TOKEN: ${{ secrets.PRINTIFY_API_TOKEN }}
+          PRINTIFY_SHOP_ID:   ${{ secrets.PRINTIFY_SHOP_ID }}
+        run: |
+          LIMIT="${{ github.event.inputs.limit || '10' }}"
+          echo "=== Rendering up to $LIMIT images via FLUX1.1 Pro ==="
+          python image_renderer.py --limit $LIMIT
+
+      # ── Step 3: Upload products to Printify (creates listings) ────────────
+      - name: Upload products to Printify
+        env:
+          PRINTIFY_API_TOKEN: ${{ secrets.PRINTIFY_API_TOKEN }}
+          PRINTIFY_SHOP_ID:   ${{ secrets.PRINTIFY_SHOP_ID }}
+        run: |
+          echo "=== Pushing products to Printify ==="
+          python printify_uploader.py
+
+      # ── Step 4: Export CSV for review ────────────────────────────────────
+      - name: Export listings CSV
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python generate_designs.py --export
+
+      # ── Step 5: Commit everything back to the repo ───────────────────────
+      - name: Commit design library + images
+        run: |
+          git config user.name  "VenDrop Bot"
+          git config user.email "bot@vendrop.ai"
+          git add output/
+          # Don't commit binary images to git — they're already in Printify
+          git reset HEAD output/images/ 2>/dev/null || true
+          git diff --staged --quiet || \
+            git commit -m "auto: $(date -u '+%Y-%m-%d %H:%M') — new batch"
+          git push
+
+      # ── Summary ───────────────────────────────────────────────────────────
+      - name: Run summary
+        run: |
+          python -c "
+          import json
+          from pathlib import Path
+          lib = json.load(open('output/designs.json'))
+          imgs = list(Path('output/images').glob('*.png'))
+          by_status = {}
+          for d in lib:
+              s = d.get('status','unknown')
+              by_status[s] = by_status.get(s,0) + 1
+          print('=== VenDrop Run Summary ===')
+          print(f'Total designs: {len(lib)}')
+          print(f'Images rendered: {len(imgs)}')
+          for s,n in sorted(by_status.items()):
+              print(f'  {s}: {n}')
+          "
